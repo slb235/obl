@@ -72,7 +72,7 @@ var downloadBound = function(boundUrl, callback) {
         download.get(url)
       })
 
-      var filePath = path.join(argv.out, 'public', 'bounds', boundUrl)
+      var filePath = path.join(argv.out, 'public', 'img', 'bounds', boundUrl)
       mkdirp(filePath, function() {
         download
           .dest(filePath)
@@ -83,7 +83,7 @@ var downloadBound = function(boundUrl, callback) {
                 if(field in element) {
                   media.map(function(url) {
                     re = new RegExp(url, 'g')
-                    element[field] = element[field].replace(re, '../bounds/' + boundUrl + '/' + path.basename(url))
+                    element[field] = element[field].replace(re, 'img/bounds/' + boundUrl + '/' + path.basename(url))
                   })
                 }
               })
