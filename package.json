@@ -9,6 +9,12 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "async": "^2.0.1",
+    "download": "^v4.4.3",
+    "download-status": "^2.2.1",
+    "lodash": "^4.15.0",
+    "mkdirp": "^0.5.1",
+    "optimist": "^0.6.1",
     "request": "^2.74.0"
   }
 }
