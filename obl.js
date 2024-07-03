@@ -6,103 +6,122 @@
  * Written by Joantahn Rauprich <joni@actionbound.de>, August 2016
  */
 
-var path = require('path')
-var fs = require('fs')
+const path = require('path')
+const fs = require('node:fs/promises')
+const { Readable } = require('stream')
+const { finished } = require('stream/promises')
 
-var _ = require('lodash')
-var async = require('async')
-var Download = require('download');
-var downloadStatus = require('download-status');
-var request = require('request')
-var mkdirp = require('mkdirp')
+async function downloadFile (url, fileName) {
+  process.stdout.write(`Downloading ${path.basename(url)}`)
+  let file
+  try {
+    // check if file exists
+    let exits = false 
+    try {
+      await fs.access(fileName)
+      exits = true
+    } catch (e) { }
+    if(exits) {
+      process.stdout.write(` allready there\n`)
+      return
+    }
+    const res = await fetch(url)
+    file = await fs.open(fileName, 'wx')
+    const fileStream = file.createWriteStream(fileName)
+    await finished(Readable.fromWeb(res.body).pipe(fileStream))
+    process.stdout.write(` done\n`)
+  }
+  catch (e) {
+    process.stdout.write(` failed\n`)
+    console.error(e)
+    // throw error up
+    throw e
+  }
+  finally {
+    file?.close()
+  }
+}
 
-var argv = require('optimist')
+const argv = require('optimist')
   .usage('Usage: $0 --out DIRECTORY URL...')
   .demand(['o', 1])
   .alias('o', 'out')
-  .describe('o', 'Output directory, usualy whitelabel merge')
-  .alias('s', 'souce')
-  .describe('s', 'Download source assets (only supports mp4, jpg, mp3 assets)')
+  .describe('o', 'Output directory (mobile/whitelabel/XX/merge')
   .argv
 
-var API_HOST = 'https://actionbound.com/api/2.7/'
-var MEDIA_CAPABLE_FIELDS = [ 'content', 'problem', 'description', 'ceremony' ]
-var IMAGE_RE = /\((https:\/\/content.actionbound.com\/user\/\w*\/image\/(1000\/)?\w*\.\w*)\)/g
-var AUDIO_RE = /data-file=\'(https:\/\/content.actionbound.com\/user\/\w*\/audio\/mp3\/\w*\.mp3)\'/g
-var VIDEO_RE = /src=\'(https:\/\/content.actionbound.com\/user\/\w*\/video\/480\/mp4\/\w*\.mp4)\'/g
-var CHECK_FOR = [ IMAGE_RE, AUDIO_RE, VIDEO_RE ]
+const API_HOST = 'https://actionbound.com/api/2.12/'
+MEDIA_CAPABLE_FIELDS = ['content', 'problem', 'description', 'ceremony', 'element_css', 'blank-text']
 
-var downloadBound = function(boundUrl, callback) {
-  request(API_HOST + 'bounds?url=' + boundUrl, function (error, response, body) {
-    var boundInfo = JSON.parse(body)[0]
-    console.log('Got Bound: ' + boundInfo.title + ' https://actionbound.com/' + boundUrl)
+// just look for anything from content.actionbound.com inside ' or ""
+const MEDIA_RE = /['"](https:\/\/content.actionbound.com\/[^'"]+)['"]/g
 
-    request(API_HOST + 'bound/' + boundUrl + '/' + boundInfo._revision_id, function (error, response, body) {
-      var bound = JSON.parse(body)
-      console.log('Checking for media in ' + bound.content.length + ' elements.')
-      
-      var media = []
-      bound.content.map(function(element) {
-        MEDIA_CAPABLE_FIELDS.map(function (field) {
-          if(field in element) {
-            CHECK_FOR.map(function (re) {
-              var match = re.exec(element[field])
-              while(match != null) {
-                media.push(match[1])
-                match = re.exec(element.field)
-              }
-            })
-          }
-        })
-        return element
-      })
-      media = _.uniq(media)
-      
-      var mediaUrls = media.map(function (url) {
-        if(argv.s) {
-          url = url.replace('/1000/', '/')
-          url = url.replace('/480/mp4/', '/')
-          url = url.replace('/mp3/', '/')
+async function downloadBound(boundUrl, revision) {
+  const boundInfo = await (await fetch(`${API_HOST}bounds?url=${boundUrl}`)).json()
+  if(boundInfo.length !== 1) {
+    console.error(`Bound not found: ${boundUrl}`)
+    return
+  }
+  console.log(`Got Bound: ${boundInfo[0].title} https://actionbound.com/${boundUrl}`)
+  const url = `${API_HOST}bound/${boundUrl}/${revision ? revision : boundInfo[0]._revision_id}`
+  const bound = await (await fetch(url)).json()
+  
+  const allFiles = []
+  for(const element of bound.content) {
+    for(const field of MEDIA_CAPABLE_FIELDS) {
+      if(field in element) {
+        for(const match of element[field].matchAll(MEDIA_RE)) {
+          allFiles.push(match[1])
         }
-        return url
-      })
-      console.log('Found ' + media.length + ' media files to download.')
-      var download = new Download()
-      mediaUrls.map(function(url) {
-        download.get(url)
-      })
+      }
+    }
+  }
 
-      var filePath = path.join(argv.out, 'public', 'img', 'bounds', boundUrl)
-      mkdirp(filePath, function() {
-        download
-          .dest(filePath)
-          .use(downloadStatus())
-          .run(function() {
-            bound.content = bound.content.map(function(element) {
-              MEDIA_CAPABLE_FIELDS.map(function (field) {
-                if(field in element) {
-                  media.map(function(url) {
-                    re = new RegExp(url, 'g')
-                    element[field] = element[field].replace(re, 'img/bounds/' + boundUrl + '/' + path.basename(url))
-                  })
-                }
-              })
-              return element
-            })
+  const filesToDownload = [...new Set(allFiles)]
+  const fileReplacments = {}
 
-            var jsonPath = path.join(argv.out, 'app', 'assets', 'javascripts', 'actionbound', 'bounds')
-            mkdirp(jsonPath, function() {
-              fs.writeFile(
-                path.join(jsonPath, boundUrl + '.js'),
-                'Actionbound.Bounds.' + boundUrl + '=' + JSON.stringify(bound),
-                callback)
-            })
-          })
-      })
-    })
-  })
-} 
+  for(const file of filesToDownload) {
+    // make directory if it doesn't exist
+    const filePath = path.resolve(argv.out, 'public', 'img', 'bounds', boundUrl)
+    await fs.mkdir(filePath, { recursive: true })
+    const destination = path.resolve(filePath, path.basename(file))
+    try {
+      await downloadFile(file, destination)
+      fileReplacments[file] = `img/bounds/${boundUrl}/${path.basename(file)}`
+    } catch(e) {
+      // allready handled in downloadFile
+    }
+  }	
 
-async.eachSeries(argv._, downloadBound, function () {
-  process.exit(0)
-})
+  for(const element of bound.content) {
+    for(const field of MEDIA_CAPABLE_FIELDS) {
+      if(field in element) {
+        for(const file of filesToDownload) {
+          const re = new RegExp(file, 'g')
+          element[field] = element[field].replace(re, fileReplacments[file])
+        }
+      }
+    }
+  }
+
+  const jsonPath = path.resolve(argv.out, 'app', 'assets', 'javascripts', 'actionbound', 'bounds')
+  await fs.mkdir(jsonPath, { recursive: true })
+  await fs.writeFile(
+    path.resolve(jsonPath, `${boundUrl}.js`),
+    `Actionbound.Bounds.${boundUrl}=${JSON.stringify(bound)}`
+  )
+  console.log(`Bound ${boundUrl} downloaded`)
+}
+
+async function main() {
+  for(const bound of argv._) {
+    let boundUrl = bound 
+    let revision
+    if(bound.includes('/')) {
+      [boundUrl, revision] = bound.split('/')
+    }
+    await downloadBound(boundUrl, revision)
+  }
+}
+
+main()
+
