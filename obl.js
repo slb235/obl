@@ -107,7 +107,7 @@ async function downloadBound(boundUrl, revision) {
   await fs.mkdir(jsonPath, { recursive: true })
   await fs.writeFile(
     path.resolve(jsonPath, `${boundUrl}.js`),
-    `Actionbound.Bounds.${boundUrl}=${JSON.stringify(bound)}`
+    `Actionbound.Bounds['${boundUrl}']=${JSON.stringify(bound)}`
   )
   console.log(`Bound ${boundUrl} downloaded`)
 }
