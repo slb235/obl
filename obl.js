@@ -76,6 +76,16 @@ async function downloadBound(boundUrl, revision) {
     }
   }
 
+  if(bound.translations) {
+    for(const locale of Object.keys(bound.translations)) {
+      for(const key of Object.keys(bound.translations[locale])) {
+        for(const match of bound.translations[locale][key].matchAll(MEDIA_RE)) {
+          allFiles.push(match[1])
+        }
+      }
+    }
+  }
+
   const filesToDownload = [...new Set(allFiles)]
   const fileReplacments = {}
 
@@ -103,11 +113,25 @@ async function downloadBound(boundUrl, revision) {
     }
   }
 
+  
+  if(bound.translations) {
+    for(const locale of Object.keys(bound.translations)) {
+      for(const key of Object.keys(bound.translations[locale])) {
+        for(const match of bound.translations[locale][key].matchAll(MEDIA_RE)) {
+          for(const file of filesToDownload) {
+            const re = new RegExp(file, 'g')
+            bound.translations[locale][key] = bound.translations[locale][key].replace(match[1], fileReplacments[match[1]])
+          }
+        }
+      }
+    }
+  }
+
   const jsonPath = path.resolve(argv.out, 'app', 'assets', 'javascripts', 'actionbound', 'bounds')
   await fs.mkdir(jsonPath, { recursive: true })
   await fs.writeFile(
     path.resolve(jsonPath, `${boundUrl}.js`),
-    `Actionbound.Bounds['${boundUrl}']=${JSON.stringify(bound)}`
+    `Actionbound.Bounds['${boundUrl}']=${JSON.stringify(bound, null, 2)}`
   )
   console.log(`Bound ${boundUrl} downloaded`)
 }
